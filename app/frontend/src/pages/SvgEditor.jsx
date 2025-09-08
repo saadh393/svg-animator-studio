@@ -3,7 +3,7 @@ import { computeState, clamp } from '../utils/anim'
 
 const allowedTags = new Set(['g','path','rect','circle','ellipse','line','polyline','polygon','text'])
 
-export default function SvgEditor(){
+export default function SvgEditor({ project, onProjectChange, playingExternal, onElementsChange }){
   const [svgText, setSvgText] = useState('')
   const [width, setWidth] = useState(800)
   const [height, setHeight] = useState(600)
@@ -11,7 +11,6 @@ export default function SvgEditor(){
   const [elements, setElements] = useState([]) // {id, tag}
   const [selected, setSelected] = useState(null)
   const [animations, setAnimations] = useState({}) // id -> [anims]
-  const [playing, setPlaying] = useState(false)
   const [t, setT] = useState(0)
   const svgRef = useRef(null)
 
@@ -20,6 +19,15 @@ export default function SvgEditor(){
     for (const id in animations) for (const a of animations[id] || []) maxEnd = Math.max(maxEnd, (a.start||0)+(a.duration||0))
     return maxEnd
   }, [animations])
+
+  // hydrate from provided project on mount/route change
+  useEffect(() => {
+    if (!project) return
+    setSvgText(project.svg || '')
+    setWidth(project.width || 800)
+    setHeight(project.height || 600)
+    setFps(project.fps || 24)
+  }, [project?.id])
 
   useEffect(() => {
     if (!svgText) return
@@ -38,19 +46,29 @@ export default function SvgEditor(){
     }
     svg.querySelectorAll(Array.from(allowedTags).join(',')).forEach(n => assignId(n))
     setElements(list)
+    if (onElementsChange) onElementsChange(list)
     // Render
     const host = svgRef.current
     host.innerHTML = ''
     host.appendChild(host.ownerDocument.importNode(svg, true))
     const root = host.querySelector('svg')
-    root.querySelectorAll('[id]').forEach(n => { n.style.transformBox='fill-box'; n.style.transformOrigin='50% 50%'; n.style.willChange='transform,opacity,fill,stroke,clip-path' })
+    root.querySelectorAll('[id]').forEach(n => { n.style.transformBox='fill-box'; n.style.transformOrigin='50% 50%'; n.style.willChange='transform,opacity,fill,stroke,clip-path'; n.style.vectorEffect='non-scaling-stroke' })
+    const onClick = (e) => {
+      const target = e.target.closest('[id]')
+      if (!target) return
+      const id = target.getAttribute('id')
+      setSelected(id)
+      window.dispatchEvent(new CustomEvent('app:selected-changed', { detail: { id } }))
+    }
+    root.addEventListener('click', onClick)
+    return () => root.removeEventListener('click', onClick)
   }, [svgText, width, height])
 
   useEffect(() => {
     let raf
     let start=performance.now()
     const tick = () => {
-      if (playing) {
+      if (playingExternal) {
         const now = (performance.now()-start) % totalMs
         setT(now)
         const root = svgRef.current?.querySelector('svg')
@@ -72,22 +90,43 @@ export default function SvgEditor(){
               }
             }
           }
+          // selection rectangle overlay (no fill, stroke only)
+          let selRect = root.querySelector('#__selectionRect')
+          if (!selected) {
+            if (selRect) selRect.remove()
+          } else {
+            if (!selRect) {
+              selRect = document.createElementNS('http://www.w3.org/2000/svg','rect')
+              selRect.setAttribute('id','__selectionRect')
+              selRect.setAttribute('fill','none')
+              selRect.setAttribute('stroke','#9ca3af')
+              selRect.setAttribute('stroke-width','1.5')
+              selRect.setAttribute('pointer-events','none')
+              selRect.setAttribute('vector-effect','non-scaling-stroke')
+              root.appendChild(selRect)
+            }
+            const sn = root.querySelector(`#${CSS.escape(selected)}`)
+            if (sn) {
+              const bb = sn.getBBox()
+              selRect.setAttribute('x', String(bb.x))
+              selRect.setAttribute('y', String(bb.y))
+              selRect.setAttribute('width', String(bb.width))
+              selRect.setAttribute('height', String(bb.height))
+            }
+          }
         }
       }
       raf = requestAnimationFrame(tick)
     }
     raf=requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [playing, elements, animations, totalMs])
+  }, [playingExternal, elements, animations, totalMs, selected])
 
-  const handleUpload = async (file) => {
-    const text = await file.text()
-    // Basic strip of script tags
-    const cleaned = text.replace(/<script[\s\S]*?<\/script>/gi, '')
-    setSvgText(cleaned)
-    setAnimations({})
-    setSelected(null)
-  }
+  // persist core project fields
+  useEffect(() => {
+    if (!onProjectChange) return
+    onProjectChange({ svg: svgText, width, height, fps })
+  }, [svgText, width, height, fps])
 
   const addAnim = (type) => {
     if (!selected) return
@@ -113,113 +152,59 @@ export default function SvgEditor(){
     const blob = await resp.blob(); const a=document.createElement('a'); const href=URL.createObjectURL(blob); a.href=href; a.download= fmt==='webp'? 'animation.webp':'animation.gif'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(href)
   }
 
+  // External export trigger via topbar
+  useEffect(() => {
+    const handler = (e) => onExport(e.detail?.fmt || 'gif')
+    const selectHandler = (e) => {
+      const id = e.detail?.id || null
+      setSelected(id)
+      if (id) window.dispatchEvent(new CustomEvent('app:selected-changed', { detail: { id } }))
+    }
+    const updateProps = (e) => {
+      const { id, props } = e.detail || {}
+      const root = svgRef.current?.querySelector('svg'); if (!root) return
+      const node = id ? root.querySelector(`#${CSS.escape(id)}`) : null; if (!node) return
+      for (const [k,v] of Object.entries(props||{})) {
+        if (k === 'opacity') node.style.opacity = String(v)
+        else if (k === 'fill') node.setAttribute('fill', v)
+        else if (k === 'stroke') node.setAttribute('stroke', v)
+        else if (k === 'strokeWidth') node.setAttribute('stroke-width', String(v))
+        else if (k === 'x' || k === 'y' || k === 'transform') node.setAttribute(k, String(v))
+        else if (k === 'rotate') {
+          const t = node.getAttribute('transform') || ''
+          const next = t.replace(/rotate\([^\)]*\)/, '').trim() + ` rotate(${v})`
+          node.setAttribute('transform', next.trim())
+        } else if (k === 'scale') {
+          const t = node.getAttribute('transform') || ''
+          const next = t.replace(/scale\([^\)]*\)/, '').trim() + ` scale(${v})`
+          node.setAttribute('transform', next.trim())
+        }
+      }
+    }
+    const addAnimEv = (e) => { const t = e.detail?.type; if (t) addAnim(t) }
+    const updateAnimEv = (e) => { const { idx, field, value } = e.detail || {}; if (typeof idx === 'number') updateAnim(idx, field, value) }
+    const removeAnimEv = (e) => { const { idx } = e.detail || {}; if (typeof idx === 'number') removeAnim(idx) }
+    const updateFps = (e) => setFps(Math.max(1, Math.min(30, parseInt(e.detail?.fps || 24, 10))))
+    window.addEventListener('app:export', handler)
+    window.addEventListener('app:select', selectHandler)
+    window.addEventListener('app:update-prop', updateProps)
+    window.addEventListener('app:update-fps', updateFps)
+    window.addEventListener('app:add-animation', addAnimEv)
+    window.addEventListener('app:update-animation', updateAnimEv)
+    window.addEventListener('app:remove-animation', removeAnimEv)
+    return () => { window.removeEventListener('app:export', handler); window.removeEventListener('app:select', selectHandler); window.removeEventListener('app:update-prop', updateProps); window.removeEventListener('app:update-fps', updateFps); window.removeEventListener('app:add-animation', addAnimEv); window.removeEventListener('app:update-animation', updateAnimEv); window.removeEventListener('app:remove-animation', removeAnimEv) }
+  }, [width, height, fps, elements, animations])
+
+  // Keep sidebar in sync with current selection's animations
+  useEffect(() => {
+    if (selected) window.dispatchEvent(new CustomEvent('app:animations-changed', { detail: { id: selected, list: animations[selected] || [] } }))
+  }, [selected, animations])
+
   return (
-    <div style={{ display:'grid', gridTemplateColumns:'280px 1fr 340px', height:'100%' }}>
-      <div style={{ padding:12, borderRight:'1px solid #ddd', overflow:'auto' }}>
-        <h3>Upload SVG</h3>
-        <input type="file" accept=".svg,image/svg+xml" onChange={e=>e.target.files[0] && handleUpload(e.target.files[0])} />
-        <div style={{ marginTop:12 }}>
-          <label>Width <input type="number" value={width} onChange={e=>setWidth(parseInt(e.target.value,10)||1)} /></label>
-          <br/>
-          <label>Height <input type="number" value={height} onChange={e=>setHeight(parseInt(e.target.value,10)||1)} /></label>
-          <br/>
-          <label>FPS <input type="number" value={fps} onChange={e=>setFps(parseInt(e.target.value,10)||24)} /></label>
-        </div>
-        <h3 style={{ marginTop:16 }}>Layers</h3>
-        <ul>
-          {elements.map(el => (
-            <li key={el.id} onClick={()=>setSelected(el.id)} style={{ cursor:'pointer', background:selected===el.id?'#eef':'transparent', padding:'4px 6px', borderRadius:4 }}>
-              {el.tag} <small>#{el.id}</small>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
-        <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
-          <button onClick={()=>setPlaying(p=>!p)}>{playing?'Pause':'Play'}</button>
-          <span>{Math.round(t)}ms / {totalMs}ms</span>
-          <button onClick={()=>onExport('gif')}>Export GIF</button>
-          <button onClick={()=>onExport('webp')}>Export WebP</button>
-        </div>
-        <div style={{ outline:'1px solid #ccc', width, height, background:'transparent' }}>
-          <div ref={svgRef} />
-        </div>
-      </div>
-
-      <div style={{ padding:12, borderLeft:'1px solid #ddd', overflow:'auto' }}>
-        <h3>Animations</h3>
-        {!selected && <div>Select a layer</div>}
-        {selected && (
-          <div>
-            <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-              <button onClick={()=>addAnim('fadeIn')}>+ Fade In</button>
-              <button onClick={()=>addAnim('fadeOut')}>+ Fade Out</button>
-              <button onClick={()=>addAnim('flash')}>+ Flash</button>
-              <button onClick={()=>addAnim('flyIn')}>+ Fly In</button>
-              <button onClick={()=>addAnim('flyOut')}>+ Fly Out</button>
-              <button onClick={()=>addAnim('wipe')}>+ Wipe</button>
-              <button onClick={()=>addAnim('zoom')}>+ Zoom</button>
-              <button onClick={()=>addAnim('shrink')}>+ Shrink</button>
-              <button onClick={()=>addAnim('bounce')}>+ Bounce</button>
-              <button onClick={()=>addAnim('pulse')}>+ Pulse</button>
-              <button onClick={()=>addAnim('spin')}>+ Spin</button>
-              <button onClick={()=>addAnim('colorPulse')}>+ Color Pulse</button>
-              <button onClick={()=>addAnim('fontColor')}>+ Font Color</button>
-            </div>
-            <ul style={{ marginTop:12 }}>
-              {(animations[selected]||[]).map((an, idx) => (
-                <li key={idx} style={{ border:'1px solid #ddd', borderRadius:6, padding:8, marginBottom:8 }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                    <strong>{an.type}</strong>
-                    <button onClick={()=>removeAnim(idx)}>Remove</button>
-                  </div>
-                  <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:8, marginTop:8 }}>
-                    <label>Start(ms) <input type="number" value={an.start||0} onChange={e=>updateAnim(idx,'start', parseInt(e.target.value,10)||0)} /></label>
-                    <label>Duration(ms) <input type="number" value={an.duration||1000} onChange={e=>updateAnim(idx,'duration', parseInt(e.target.value,10)||1000)} /></label>
-                    <label>Loop <input type="checkbox" checked={!!an.loop} onChange={e=>updateAnim(idx,'loop', e.target.checked)} /></label>
-                    <label>Easing
-                      <select value={an.easing||'ease'} onChange={e=>updateAnim(idx,'easing', e.target.value)}>
-                        <option value="ease">Ease</option>
-                        <option value="linear">Linear</option>
-                      </select>
-                    </label>
-                    {['flyIn','flyOut','wipe','spin'].includes(an.type) && (
-                      <label>Direction
-                        <select value={an.direction||'right'} onChange={e=>updateAnim(idx,'direction', e.target.value)}>
-                          <option>left</option>
-                          <option>right</option>
-                          <option>top</option>
-                          <option>bottom</option>
-                          <option>cw</option>
-                          <option>ccw</option>
-                        </select>
-                      </label>
-                    )}
-                    {['zoom'].includes(an.type) && (
-                      <label>From <input type="number" step="0.1" value={an.from??0} onChange={e=>updateAnim(idx,'from', parseFloat(e.target.value)||0)} /></label>
-                    )}
-                    {['zoom','grow','shrink'].includes(an.type) && (
-                      <label>To <input type="number" step="0.1" value={an.to??1} onChange={e=>updateAnim(idx,'to', parseFloat(e.target.value)||1)} /></label>
-                    )}
-                    {['colorPulse','fontColor'].includes(an.type) && (
-                      <label>From <input type="color" value={an.from||'#ffffff'} onChange={e=>updateAnim(idx,'from', e.target.value)} /></label>
-                    )}
-                    {['colorPulse','fontColor'].includes(an.type) && (
-                      <label>To <input type="color" value={an.to||'#ff4081'} onChange={e=>updateAnim(idx,'to', e.target.value)} /></label>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        <div style={{ marginTop:16 }}>
-          <h4>JSON</h4>
-          <textarea rows={14} style={{ width:'100%' }} value={JSON.stringify({ svg: svgRef.current?.querySelector('svg')?.outerHTML || '', width, height, fps, elements: elements.map(e=>({ id:e.id, animations: animations[e.id]||[] })) }, null, 2)} readOnly />
-        </div>
+    <div className="flex items-center justify-center w-full h-full">
+      <div className="bg-gray-950 border border-gray-800 rounded-lg" style={{ width, height }}>
+        <div ref={svgRef} className="w-full h-full" />
       </div>
     </div>
   )
 }
-
