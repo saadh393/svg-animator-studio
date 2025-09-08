@@ -142,10 +142,10 @@ export default function SvgEditor({ project, onProjectChange, playingExternal, o
     onProjectChange({ svg: svgText, width, height, fps })
   }, [svgText, width, height, fps])
 
-  const addAnim = (type) => {
+  const addAnim = (type, props = {}) => {
     if (!selected) return
     setAnimations(a => {
-      const next = { ...a, [selected]: [...(a[selected]||[]), { type, start:0, duration:1000 }] }
+      const next = { ...a, [selected]: [...(a[selected]||[]), { type, start:0, duration:1000, ...props }] }
       window.dispatchEvent(new CustomEvent('app:animations-changed', { detail: { id: selected, list: next[selected] } }))
       return next
     })
@@ -209,7 +209,7 @@ export default function SvgEditor({ project, onProjectChange, playingExternal, o
         }
       }
     }
-    const addAnimEv = (e) => { const t = e.detail?.type; if (t) addAnim(t) }
+    const addAnimEv = (e) => { const t = e.detail?.type; const props = e.detail?.props || {}; if (t) addAnim(t, props) }
     const updateAnimEv = (e) => { const { idx, field, value } = e.detail || {}; if (typeof idx === 'number') updateAnim(idx, field, value) }
     const removeAnimEv = (e) => { const { idx } = e.detail || {}; if (typeof idx === 'number') removeAnim(idx) }
     const updateFps = (e) => setFps(Math.max(1, Math.min(30, parseInt(e.detail?.fps || 24, 10))))

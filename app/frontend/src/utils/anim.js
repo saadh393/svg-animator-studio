@@ -8,8 +8,8 @@ export function mixColor(a,b,t){ const A=hexToRgb(a)||{r:255,g:255,b:255}; const
 export function computeState(el, t){
   let opacity = el.opacity ?? 1; let scale=el.scale ?? 1; let rot=0; let tx=0; let ty=0; let fill=null; let stroke=null; let clipProg=null;
   for (const a of el.animations||[]) {
-    const start = a.start||0; const duration=a.duration||1000; const loop=!!a.loop; const dir=a.direction||'right'
-    if (t < start) continue; let lt=t-start; if(!loop && lt>duration) continue; if(loop&&duration>0) lt=lt%duration; const p = clamp(duration? lt/duration : 1,0,1); const e = a.easing==='linear'?p:easeInOut(p)
+    const start = a.start||0; const duration=a.duration||1000; const loop=!!a.loop; const dir=a.direction||'right'; const repeat = Number.isFinite(a.repeat)?a.repeat:(Number.isFinite(a.repeats)?a.repeats:null)
+    if (t < start) continue; let lt=t-start; const total = (repeat && repeat>1) ? duration*repeat : duration; if(!loop && lt>total) continue; if((loop || (repeat&&repeat>1)) && duration>0) lt=lt%duration; const p = clamp(duration? lt/duration : 1,0,1); const e = a.easing==='linear'?p:easeInOut(p)
     switch(a.type){
       case 'fadeIn': opacity *= e; break;
       case 'fadeOut': opacity *= (1-e); break;
@@ -29,4 +29,3 @@ export function computeState(el, t){
   }
   return { opacity: clamp(opacity,0,1), scale: Math.max(0,scale), rotation: rot, tx, ty, fill, stroke, clipProg }
 }
-
