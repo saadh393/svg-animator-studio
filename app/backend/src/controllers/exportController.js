@@ -57,10 +57,10 @@ export async function exportGifHandler(req, res) {
     const jobId = uuidv4();
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `anim-${jobId}-`));
 
-    const { frameCount, framesTxt, uniqueFramesDir } = await renderFramesPuppeteer(payload, tmpDir);
+    const { frameCount, framesTxt, uniqueFramesDir, width, height } = await renderFramesPuppeteer(payload, tmpDir);
 
     const outPath = path.join(tmpDir, 'output.gif');
-    await exportGif({ framesTxt, outPath });
+    await exportGif({ framesTxt, outPath, width, height });
 
     res.setHeader('Content-Type', 'image/gif');
     res.setHeader('Content-Disposition', 'attachment; filename="animation.gif"');
@@ -81,9 +81,9 @@ export async function exportWebpHandler(req, res) {
     const jobId = uuidv4();
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `anim-${jobId}-`));
 
-    const { frameCount, framesTxt } = await renderFramesPuppeteer(payload, tmpDir);
+    const { frameCount, framesTxt, width, height } = await renderFramesPuppeteer(payload, tmpDir);
     const outPath = path.join(tmpDir, 'output.webp');
-    await exportWebp({ framesTxt, outPath });
+    await exportWebp({ framesTxt, outPath, width, height });
 
     res.setHeader('Content-Type', 'image/webp');
     res.setHeader('Content-Disposition', 'attachment; filename="animation.webp"');

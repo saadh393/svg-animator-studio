@@ -23,13 +23,15 @@ export async function renderFramesPuppeteer(doc, workDir) {
   const dt = 1000 / fps;
   const frameCount = Math.max(1, Math.round(totalMs / dt));
 
+  // Render at higher device scale for smoother edges, then downscale in export
+  const SS = 2; // supersample factor
   const browser = await puppeteer.launch({
     headless: 'new',
     defaultViewport: { width, height },
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
   const page = await browser.newPage();
-  await page.setViewport({ width, height, deviceScaleFactor: 1 });
+  await page.setViewport({ width, height, deviceScaleFactor: SS });
 
   const html = makeHtml({ width, height, svg: safeSvg, doc });
   await page.setContent(html, { waitUntil: 'load' });
@@ -90,7 +92,7 @@ export async function renderFramesPuppeteer(doc, workDir) {
   await fs.writeFile(framesTxt, lines.join('\n'));
 
   await browser.close();
-  return { frameCount, framesTxt, uniqueFramesDir: uniqueDir };
+  return { frameCount, framesTxt, uniqueFramesDir: uniqueDir, width, height, supersample: SS };
 }
 
 function makeHtml({ width, height, svg, doc }) {
@@ -102,7 +104,7 @@ function makeHtml({ width, height, svg, doc }) {
       <style>
         html, body { margin:0; padding:0; background:transparent; }
         #stage { width:${width}px; height:${height}px; overflow:hidden; background:transparent; }
-        svg { width:${width}px; height:${height}px; }
+        svg { width:${width}px; height:${height}px; shape-rendering: geometricPrecision; text-rendering: optimizeLegibility; image-rendering: optimizeQuality; -webkit-font-smoothing: antialiased; }
       </style>
     </head>
     <body>

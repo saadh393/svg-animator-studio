@@ -3,15 +3,17 @@ import ffmpegPath from 'ffmpeg-static';
 import fs from 'fs-extra';
 import which from 'which';
 
-export async function exportGif({ framesTxt, outPath }) {
+export async function exportGif({ framesTxt, outPath, width, height }) {
   const args = [
     '-y',
     '-f', 'concat',
     '-safe', '0',
     '-i', framesTxt,
     '-filter_complex',
-    // palettegen with transparent reserved and 128 colors, paletteuse with bayer dithering
-    "split [a][b]; [a] palettegen=reserve_transparent=1:max_colors=128:stats_mode=diff [p]; [b][p] paletteuse=dither=bayer:bayer_scale=5",
+    // Downscale with high quality (lanczos), then generate/apply palette with full stats and smooth dithering
+    `[0:v]${width && height ? `scale=${width}:${height}:flags=lanczos,` : ''}split [a][b];` +
+      ` [a] palettegen=reserve_transparent=1:max_colors=256:stats_mode=full [p];` +
+      ` [b][p] paletteuse=dither=floyd_steinberg`,
     '-loop', '0',
     outPath
   ];
@@ -22,7 +24,8 @@ export async function exportGif({ framesTxt, outPath }) {
   if (gPath) {
     try {
       const tmp = outPath + '.opt.gif';
-      await run(gPath, ['--optimize=3', '--colors', '128', '--no-warnings', outPath, '-o', tmp]);
+      // Keep full color palette from ffmpeg (do not downsample colors again)
+      await run(gPath, ['--optimize=3', '--no-warnings', outPath, '-o', tmp]);
       await fs.move(tmp, outPath, { overwrite: true });
     } catch (e) {
       // ignore optimization errors
@@ -30,15 +33,17 @@ export async function exportGif({ framesTxt, outPath }) {
   }
 }
 
-export async function exportWebp({ framesTxt, outPath }) {
+export async function exportWebp({ framesTxt, outPath, width, height }) {
   const args = [
     '-y',
     '-f', 'concat',
     '-safe', '0',
     '-i', framesTxt,
+    ...(width && height ? ['-vf', `scale=${width}:${height}:flags=lanczos`] : []),
     '-c:v', 'libwebp',
     '-lossless', '0',
-    '-q:v', '70',
+    '-q:v', '90',
+    '-compression_level', '6',
     '-pix_fmt', 'yuva420p',
     '-loop', '0',
     outPath
@@ -58,4 +63,3 @@ async function whichOptional(bin) {
     return null;
   }
 }
-
