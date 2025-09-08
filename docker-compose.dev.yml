@@ -1,0 +1,33 @@
+name: svg-animator-dev
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: backend_dev
+    environment:
+      - NODE_ENV=development
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: frontend_dev
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "3000:3000"
+
+networks:
+  default:
+    name: svg-animator-net
+

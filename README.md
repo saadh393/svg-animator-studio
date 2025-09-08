@@ -1,16 +1,17 @@
-SVG Animator — Figma‑style SVG Animation Studio
-==============================================
+# SVG Animator Studio
 
 A modern, minimal, dark‑only web app for creating polished SVG animations and exporting them to high‑quality GIF and WebP. The goal of this product is to make SVG animation approachable and fast without sacrificing quality.
 
 This repository contains both the frontend editor (React + Vite + Tailwind + Radix UI + Lucide) and a backend renderer (Node + Express + Puppeteer + FFmpeg).
 
 **Why This Exists**
+
 - Simplify SVG animation: Focus on the creative flow, not the tooling.
 - High‑quality output: Smooth edges, clean antialiasing, compact files.
 - Production‑ready UX: Figma‑like layout, consistent components, dark UI.
 
 **Key Features**
+
 - Drag‑and‑drop SVG upload: Instant preview, progress, and replace support.
 - Gallery + Projects: Home page list of recent SVGs (localStorage) with reopen.
 - Editor with tabs: Switch between multiple open projects like Figma.
@@ -25,6 +26,7 @@ This repository contains both the frontend editor (React + Vite + Tailwind + Rad
 - Quality pipeline: Supersampled rendering + Lanczos downscale + tuned encoders.
 
 **How It Works**
+
 - Frontend composition: The editor builds a document model from your SVG and the per‑element animation settings. Interaction state persists to localStorage so you don’t lose work.
 - Sanitization: The backend cleans the SVG (sanitize‑html) to keep rendering safe.
 - Headless rendering: Puppeteer launches Chromium, loads an HTML page that embeds your sanitized SVG and the animation runtime.
@@ -35,6 +37,7 @@ This repository contains both the frontend editor (React + Vite + Tailwind + Rad
   - WebP: quality 90, alpha support, Lanczos scale
 
 **Project Structure**
+
 - Frontend (React + Vite): `app/frontend`
 - Backend (Express + Puppeteer): `app/backend`
 - Core export services:
@@ -43,16 +46,20 @@ This repository contains both the frontend editor (React + Vite + Tailwind + Rad
   - Controller: `app/backend/src/controllers/exportController.js`
 
 **Quick Start**
+
 - Prerequisites
+
   - Node.js 18+ (or 20+ recommended)
   - No system FFmpeg required (bundled via `ffmpeg-static`)
 
 - Backend (port 4000)
+
   - `cd app/backend`
   - `npm install`
   - `npm run dev`
 
 - Frontend (port 3000, proxies `/api` → 4000)
+
   - `cd app/frontend`
   - `npm install`
   - `npm run dev`
@@ -63,6 +70,7 @@ This repository contains both the frontend editor (React + Vite + Tailwind + Rad
   - Backend (server only): `cd app/backend && npm run start`
 
 **API (Export)**
+
 - `POST /api/export/gif`
 - `POST /api/export/webp`
 - Body (JSON):
@@ -90,12 +98,14 @@ Example minimal payload
 ```
 
 **Output Quality**
+
 - Supersampling: Headless Chromium renders at 2× device scale to smooth edges.
 - Downscale: Lanczos resampling preserves detail when scaling to the target size.
 - GIF tuning: 256‑color palette, full stats, Floyd–Steinberg dithering.
 - WebP tuning: q=90 with alpha, good balance between quality and size.
 
 **Roadmap**
+
 - Shape tools: Create rectangles, circles, paths directly in the canvas.
 - Path editor: Point editing, boolean ops, smoothing, auto‑trace.
 - SVG editing: Re‑order layers, group/ungroup, lock/visibility, batch edits.
@@ -106,6 +116,7 @@ Example minimal payload
 
 **Contributing**
 We welcome issues and pull requests! To contribute:
+
 - Discuss: Open an issue describing the problem or proposal.
 - Fork & branch: Keep changes focused and scoped.
 - Code style: ESM modules, small, composable components, and consistent Tailwind classes.
@@ -116,8 +127,8 @@ We welcome issues and pull requests! To contribute:
 If you’re not sure where to start, look at “Good first issues” or propose a small UX improvement (labels, icons, shortcuts) — design polish is always welcome.
 
 **Acknowledgements**
+
 - Built with React, Tailwind, Radix UI, Lucide icons
 - Rendering powered by Puppeteer and FFmpeg
 
 > This project aims to make SVG animation effortless and beautiful. In upcoming releases we’ll add shape/path creation and deeper SVG editing right in the editor. Stay tuned — and help us get there!
-

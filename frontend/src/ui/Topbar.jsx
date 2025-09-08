@@ -9,7 +9,8 @@ export default function Topbar({ onPlayToggle, playing }) {
   return (
     <header className="toolbar sticky top-0 z-20 h-12 flex items-center justify-between px-3">
       <div className="flex items-center gap-2 text-sm text-gray-300">
-        <div className="font-semibold">Editor</div>
+        <img src="/logo.png" alt="SVG Animation Studio" className="w-5 h-5 rounded-sm" />
+        <div className="font-semibold">SVG Animation Studio</div>
       </div>
       <div className="flex items-center gap-2">
         <DropdownMenu.Root>
