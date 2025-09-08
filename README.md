@@ -1,4 +1,8 @@
-# SVG Animator Studio
+<p align="center">
+  <img src="frontend/public/logo.png" alt="SVG Animation Studio" width="96" height="96" />
+</p>
+
+# SVG Animation Studio
 
 A modern, minimal, dark‑only web app for creating polished SVG animations and exporting them to high‑quality GIF and WebP. The goal of this product is to make SVG animation approachable and fast without sacrificing quality.
 
@@ -38,12 +42,12 @@ This repository contains both the frontend editor (React + Vite + Tailwind + Rad
 
 **Project Structure**
 
-- Frontend (React + Vite): `app/frontend`
-- Backend (Express + Puppeteer): `app/backend`
+- Frontend (React + Vite): `frontend`
+- Backend (Express + Puppeteer): `backend`
 - Core export services:
-  - Renderer: `app/backend/src/services/rendererPuppeteer.js`
-  - Exporters: `app/backend/src/services/exporter.js`
-  - Controller: `app/backend/src/controllers/exportController.js`
+  - Renderer: `backend/src/services/rendererPuppeteer.js`
+  - Exporters: `backend/src/services/exporter.js`
+  - Controller: `backend/src/controllers/exportController.js`
 
 **Quick Start**
 
@@ -54,20 +58,20 @@ This repository contains both the frontend editor (React + Vite + Tailwind + Rad
 
 - Backend (port 4000)
 
-  - `cd app/backend`
+  - `cd backend`
   - `npm install`
   - `npm run dev`
 
 - Frontend (port 3000, proxies `/api` → 4000)
 
-  - `cd app/frontend`
+  - `cd frontend`
   - `npm install`
   - `npm run dev`
   - Open `http://localhost:3000`
 
 - Build
-  - Frontend: `cd app/frontend && npm run build`
-  - Backend (server only): `cd app/backend && npm run start`
+  - Frontend: `cd frontend && npm run build`
+  - Backend (server only): `cd backend && npm run start`
 
 **API (Export)**
 
