@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { nanoid } from 'nanoid'
 import { computeState, clamp } from '../utils/anim'
 
 const allowedTags = new Set(['g','path','rect','circle','ellipse','line','polyline','polygon','text'])
@@ -34,31 +35,44 @@ export default function SvgEditor({ project, onProjectChange, playingExternal, o
     const parser = new DOMParser()
     const doc = parser.parseFromString(svgText, 'image/svg+xml')
     const svg = doc.documentElement
-    // Ensure width/height
+    // Ensure width/height stay synced
     svg.setAttribute('width', String(width))
     svg.setAttribute('height', String(height))
-    // Collect elements
-    const list = []
-    let auto=0
-    const assignId = (node) => {
-      if (!node.getAttribute('id')) node.setAttribute('id', `el_${auto++}`)
-      list.push({ id: node.getAttribute('id'), tag: node.tagName })
+
+    // Ensure all actionable nodes have stable IDs; persist them back into svgText once
+    const nodes = Array.from(svg.querySelectorAll(Array.from(allowedTags).join(',')))
+    let mutated = false
+    for (const n of nodes) {
+      if (!n.getAttribute('id')) { n.setAttribute('id', `el_${n.tagName}_${nanoid(6)}`); mutated = true }
     }
-    svg.querySelectorAll(Array.from(allowedTags).join(',')).forEach(n => assignId(n))
+    if (mutated) {
+      // Persist IDs so future renders keep the same mapping
+      const serialized = new XMLSerializer().serializeToString(svg)
+      setSvgText(serialized)
+      return // next effect run will render with persisted ids
+    }
+
+    // Collect elements list with stable IDs
+    const list = nodes.map(n => ({ id: n.getAttribute('id'), tag: n.tagName }))
     setElements(list)
     if (onElementsChange) onElementsChange(list)
-    // Render
+
+    // Render into host
     const host = svgRef.current
     host.innerHTML = ''
     host.appendChild(host.ownerDocument.importNode(svg, true))
     const root = host.querySelector('svg')
     root.querySelectorAll('[id]').forEach(n => { n.style.transformBox='fill-box'; n.style.transformOrigin='50% 50%'; n.style.willChange='transform,opacity,fill,stroke,clip-path'; n.style.vectorEffect='non-scaling-stroke' })
+    const validIds = new Set(list.map(l => l.id))
     const onClick = (e) => {
       const target = e.target.closest('[id]')
       if (!target) return
       const id = target.getAttribute('id')
+      if (!validIds.has(id) || id.startsWith('__')) return
       setSelected(id)
       window.dispatchEvent(new CustomEvent('app:selected-changed', { detail: { id } }))
+      // Also notify current animations for sidebar sync
+      window.dispatchEvent(new CustomEvent('app:animations-changed', { detail: { id, list: (animations[id] || []) } }))
     }
     root.addEventListener('click', onClick)
     return () => root.removeEventListener('click', onClick)
@@ -130,15 +144,29 @@ export default function SvgEditor({ project, onProjectChange, playingExternal, o
 
   const addAnim = (type) => {
     if (!selected) return
-    setAnimations(a => ({...a, [selected]: [...(a[selected]||[]), { type, start:0, duration:1000 }]}))
+    setAnimations(a => {
+      const next = { ...a, [selected]: [...(a[selected]||[]), { type, start:0, duration:1000 }] }
+      window.dispatchEvent(new CustomEvent('app:animations-changed', { detail: { id: selected, list: next[selected] } }))
+      return next
+    })
   }
   const updateAnim = (idx, field, value) => {
     if (!selected) return
-    setAnimations(a => ({...a, [selected]: (a[selected]||[]).map((an,i)=> i===idx ? { ...an, [field]: value } : an)}))
+    setAnimations(a => {
+      const list = (a[selected]||[]).map((an,i)=> i===idx ? { ...an, [field]: value } : an)
+      const next = { ...a, [selected]: list }
+      window.dispatchEvent(new CustomEvent('app:animations-changed', { detail: { id: selected, list } }))
+      return next
+    })
   }
   const removeAnim = (idx) => {
     if (!selected) return
-    setAnimations(a => ({...a, [selected]: (a[selected]||[]).filter((_,i)=>i!==idx)}))
+    setAnimations(a => {
+      const list = (a[selected]||[]).filter((_,i)=>i!==idx)
+      const next = { ...a, [selected]: list }
+      window.dispatchEvent(new CustomEvent('app:animations-changed', { detail: { id: selected, list } }))
+      return next
+    })
   }
 
   const onExport = async (fmt) => {
@@ -185,6 +213,11 @@ export default function SvgEditor({ project, onProjectChange, playingExternal, o
     const updateAnimEv = (e) => { const { idx, field, value } = e.detail || {}; if (typeof idx === 'number') updateAnim(idx, field, value) }
     const removeAnimEv = (e) => { const { idx } = e.detail || {}; if (typeof idx === 'number') removeAnim(idx) }
     const updateFps = (e) => setFps(Math.max(1, Math.min(30, parseInt(e.detail?.fps || 24, 10))))
+    const requestAnims = (e) => {
+      const id = e.detail?.id || selected
+      if (!id) return
+      window.dispatchEvent(new CustomEvent('app:animations-changed', { detail: { id, list: animations[id] || [] } }))
+    }
     window.addEventListener('app:export', handler)
     window.addEventListener('app:select', selectHandler)
     window.addEventListener('app:update-prop', updateProps)
@@ -192,8 +225,9 @@ export default function SvgEditor({ project, onProjectChange, playingExternal, o
     window.addEventListener('app:add-animation', addAnimEv)
     window.addEventListener('app:update-animation', updateAnimEv)
     window.addEventListener('app:remove-animation', removeAnimEv)
-    return () => { window.removeEventListener('app:export', handler); window.removeEventListener('app:select', selectHandler); window.removeEventListener('app:update-prop', updateProps); window.removeEventListener('app:update-fps', updateFps); window.removeEventListener('app:add-animation', addAnimEv); window.removeEventListener('app:update-animation', updateAnimEv); window.removeEventListener('app:remove-animation', removeAnimEv) }
-  }, [width, height, fps, elements, animations])
+    window.addEventListener('app:request-animations', requestAnims)
+    return () => { window.removeEventListener('app:export', handler); window.removeEventListener('app:select', selectHandler); window.removeEventListener('app:update-prop', updateProps); window.removeEventListener('app:update-fps', updateFps); window.removeEventListener('app:add-animation', addAnimEv); window.removeEventListener('app:update-animation', updateAnimEv); window.removeEventListener('app:remove-animation', removeAnimEv); window.removeEventListener('app:request-animations', requestAnims) }
+  }, [width, height, fps, elements, animations, selected])
 
   // Keep sidebar in sync with current selection's animations
   useEffect(() => {

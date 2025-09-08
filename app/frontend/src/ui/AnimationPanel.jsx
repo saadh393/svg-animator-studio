@@ -36,6 +36,14 @@ export default function AnimationPanel({ selectedId }) {
     return () => window.removeEventListener('app:animations-changed', h)
   }, [selectedId])
 
+  // On selection change, clear to avoid showing stale lists and request the fresh one
+  useEffect(() => {
+    setList([])
+    if (selectedId) {
+      window.dispatchEvent(new CustomEvent('app:request-animations', { detail: { id: selectedId } }))
+    }
+  }, [selectedId])
+
   const add = (type) => window.dispatchEvent(new CustomEvent('app:add-animation', { detail: { type } }))
   const update = (idx, field, value) => window.dispatchEvent(new CustomEvent('app:update-animation', { detail: { idx, field, value } }))
   const remove = (idx) => window.dispatchEvent(new CustomEvent('app:remove-animation', { detail: { idx } }))
@@ -146,4 +154,3 @@ export default function AnimationPanel({ selectedId }) {
     </div>
   )
 }
-
