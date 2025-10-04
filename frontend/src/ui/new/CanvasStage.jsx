@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const snapValue = (value, snap, enabled) => (enabled ? Math.round(value / snap) * snap : value);
 
@@ -6,9 +6,14 @@ export default function CanvasStage({ state, dispatch, EditorActions: Actions, a
   const svgRef = useRef(null);
   const overlayRef = useRef(null);
   const [dragging, setDragging] = useState(null);
+  const stateRef = useRef(state);
   const zoom = state.ui.zoom;
   const pan = state.ui.pan;
   const snapEnabled = state.ui.snapToGrid;
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   const elements = state.ui.playing ? animatedElements : state.elements;
 
@@ -47,7 +52,7 @@ export default function CanvasStage({ state, dispatch, EditorActions: Actions, a
   const viewBoxWidth = state.document.width / zoom;
   const viewBoxHeight = state.document.height / zoom;
 
-  const getPoint = (event) => {
+  const getPoint = useCallback((event) => {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
     const pt = svg.createSVGPoint();
@@ -60,9 +65,157 @@ export default function CanvasStage({ state, dispatch, EditorActions: Actions, a
       x: snapValue(transformed.x, 8, snapEnabled),
       y: snapValue(transformed.y, 8, snapEnabled),
     };
+  }, [snapEnabled]);
+
+  const activeLayerId = useMemo(() => {
+    const unlocked = state.layers.find((layer) => !layer.locked);
+    return (unlocked || state.layers[0] || { id: null }).id;
+  }, [state.layers]);
+
+  const finalizeDraw = (tool, start, end, layerId) => {
+    const width = Math.abs(end.x - start.x);
+    const height = Math.abs(end.y - start.y);
+    const center = { x: (end.x + start.x) / 2, y: (end.y + start.y) / 2 };
+    if (tool === "rect") {
+      dispatch(
+        Actions.addElement({
+          type: "rect",
+          transform: { x: center.x, y: center.y },
+          geometry: { width: Math.max(width, 10), height: Math.max(height, 10), rx: 0, ry: 0 },
+          layerId,
+        })
+      );
+    } else if (tool === "circle") {
+      const radius = Math.max(width, height) / 2;
+      dispatch(
+        Actions.addElement({
+          type: "circle",
+          transform: { x: center.x, y: center.y },
+          geometry: { r: Math.max(radius, 8) },
+          layerId,
+        })
+      );
+    } else if (tool === "ellipse") {
+      dispatch(
+        Actions.addElement({
+          type: "ellipse",
+          transform: { x: center.x, y: center.y },
+          geometry: { rx: Math.max(width / 2, 8), ry: Math.max(height / 2, 8) },
+          layerId,
+        })
+      );
+    } else if (tool === "line") {
+      dispatch(
+        Actions.addElement({
+          type: "line",
+          transform: { x: start.x, y: start.y },
+          geometry: { x1: 0, y1: 0, x2: end.x - start.x, y2: end.y - start.y },
+          layerId,
+        })
+      );
+    } else if (tool === "polygon") {
+      const radius = Math.max(width, height) / 2;
+      dispatch(
+        Actions.addElement({
+          type: "polygon",
+          transform: { x: center.x, y: center.y },
+          geometry: { radius: Math.max(radius, 12), sides: 5 },
+          layerId,
+        })
+      );
+    } else if (tool === "star") {
+      const radius = Math.max(width, height) / 2;
+      dispatch(
+        Actions.addElement({
+          type: "star",
+          transform: { x: center.x, y: center.y },
+          geometry: { outerRadius: Math.max(radius, 16), innerRadius: Math.max(radius / 2, 8), points: 5 },
+          layerId,
+        })
+      );
+    }
   };
 
+  const finalizePen = (path, layerId) => {
+    if (!path.length) return;
+    dispatch(
+      Actions.addElement({
+        type: "path",
+        transform: { x: 0, y: 0 },
+        geometry: { commands: path, closed: true },
+        layerId,
+      })
+    );
+  };
+
+  useEffect(() => {
+    if (!dragging) return;
+    const overlay = overlayRef.current;
+
+    const handleMove = (event) => {
+      const currentState = stateRef.current;
+      if (!currentState) return;
+      if (dragging.mode === "move" && dragging.id) {
+        const element = currentState.elements[dragging.id];
+        if (!element) return;
+        const { x, y } = getPoint(event);
+        const dx = x - dragging.start.x;
+        const dy = y - dragging.start.y;
+        dispatch(
+          Actions.mergeElement(dragging.id, {
+            transform: {
+              ...dragging.initial,
+              x: dragging.initial.x + dx,
+              y: dragging.initial.y + dy,
+            },
+          })
+        );
+      } else if (dragging.mode === "pan") {
+        const { startClient, initialPan } = dragging;
+        const dx = (event.clientX - startClient.x) * (viewBoxWidth / currentState.document.width);
+        const dy = (event.clientY - startClient.y) * (viewBoxHeight / currentState.document.height);
+        dispatch(Actions.setPan({ x: initialPan.x - dx, y: initialPan.y - dy }));
+      } else if (dragging.mode === "draw") {
+        const { x, y } = getPoint(event);
+        drawShapePreview(dragging, { x, y }, overlay);
+      } else if (dragging.mode === "pen") {
+        const { x, y } = getPoint(event);
+        const next = [...dragging.path, { x, y }];
+        drawPenPreview(next, overlay);
+        setDragging((prev) => (prev && prev.mode === "pen" ? { ...prev, path: next } : prev));
+      }
+    };
+
+    const handleUp = (event) => {
+      const currentState = stateRef.current;
+      if (overlay) overlay.innerHTML = "";
+      if (dragging.mode === "draw") {
+        const { x, y } = getPoint(event);
+        finalizeDraw(dragging.tool, dragging.start, { x, y }, dragging.layerId || activeLayerId);
+      } else if (dragging.mode === "pen") {
+        finalizePen(dragging.path, dragging.layerId || activeLayerId);
+      }
+      setDragging(null);
+      if (currentState?.ui.tool === "select" && dragging.mode === "move") {
+        // Nothing extra
+      }
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
+    window.addEventListener("blur", handleUp);
+
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+      window.removeEventListener("blur", handleUp);
+    };
+  }, [dragging, dispatch, Actions, activeLayerId, getPoint, viewBoxWidth, viewBoxHeight]);
+
   const onPointerDown = (event) => {
+    event.preventDefault();
     const { x, y } = getPoint(event);
     const tool = state.ui.tool;
     if (tool === "select") {
@@ -70,146 +223,37 @@ export default function CanvasStage({ state, dispatch, EditorActions: Actions, a
       if (target) {
         const id = target.dataset.element;
         dispatch(Actions.select([id]));
-        setDragging({ mode: "move", id, start: { x, y }, initial: { ...state.elements[id].transform } });
+        const element = state.elements[id];
+        if (!element) return;
+        setDragging({ mode: "move", id, start: { x, y }, initial: { ...element.transform } });
       } else {
         dispatch(Actions.clearSelection());
       }
     } else if (tool === "pan") {
-      setDragging({ mode: "pan", start: { x: event.clientX, y: event.clientY }, initial: { ...pan } });
-    } else if (tool === "rect" || tool === "circle" || tool === "ellipse" || tool === "line" || tool === "polygon" || tool === "star") {
-      setDragging({
-        mode: "draw",
-        tool,
-        start: { x, y },
-      });
+      setDragging({ mode: "pan", startClient: { x: event.clientX, y: event.clientY }, initialPan: { ...pan } });
+    } else if (["rect", "circle", "ellipse", "line", "polygon", "star"].includes(tool)) {
+      const layerId = activeLayerId;
+      if (!layerId) return;
+      setDragging({ mode: "draw", tool, start: { x, y }, layerId });
+      drawShapePreview({ mode: "draw", tool, start: { x, y } }, { x, y }, overlayRef.current);
     } else if (tool === "pen") {
+      const layerId = activeLayerId;
+      if (!layerId) return;
       const cmd = { x, y };
-      const path = [{ x, y }];
-      setDragging({ mode: "pen", path, last: cmd });
       drawPenPreview([cmd], overlayRef.current);
+      setDragging({ mode: "pen", path: [cmd], layerId });
     } else if (tool === "text") {
+      const layerId = activeLayerId;
+      if (!layerId) return;
       dispatch(
         Actions.addElement({
           type: "text",
           transform: { x, y, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0 },
-          layerId: state.layers[0]?.id,
+          layerId,
           text: "Sample Text",
         })
       );
     }
-  };
-
-  const onPointerMove = (event) => {
-    if (!dragging) return;
-    const tool = state.ui.tool;
-    if (dragging.mode === "move" && dragging.id) {
-      const { x, y } = getPoint(event);
-      const dx = x - dragging.start.x;
-      const dy = y - dragging.start.y;
-      dispatch(
-        Actions.mergeElement(dragging.id, {
-          transform: {
-            ...dragging.initial,
-            x: dragging.initial.x + dx,
-            y: dragging.initial.y + dy,
-          },
-        })
-      );
-    } else if (dragging.mode === "pan") {
-      const dx = (event.clientX - dragging.start.x) * (viewBoxWidth / state.document.width);
-      const dy = (event.clientY - dragging.start.y) * (viewBoxHeight / state.document.height);
-      dispatch(Actions.setPan({ x: dragging.initial.x - dx, y: dragging.initial.y - dy }));
-    } else if (dragging.mode === "draw") {
-      const { x, y } = getPoint(event);
-      drawShapePreview(dragging, { x, y }, overlayRef.current);
-    } else if (dragging.mode === "pen") {
-      const { x, y } = getPoint(event);
-      const next = [...dragging.path, { x, y }];
-      setDragging({ ...dragging, path: next });
-      drawPenPreview(next, overlayRef.current);
-    }
-  };
-
-  const onPointerUp = (event) => {
-    if (!dragging) return;
-    if (dragging.mode === "draw") {
-      const { x, y } = getPoint(event);
-      const { start, tool } = dragging;
-      const width = Math.abs(x - start.x);
-      const height = Math.abs(y - start.y);
-      const center = { x: (x + start.x) / 2, y: (y + start.y) / 2 };
-      if (tool === "rect") {
-        dispatch(
-          Actions.addElement({
-            type: "rect",
-            transform: { x: center.x, y: center.y },
-            geometry: { width: Math.max(width, 10), height: Math.max(height, 10), rx: 0, ry: 0 },
-            layerId: state.layers[0]?.id,
-          })
-        );
-      } else if (tool === "circle") {
-        const radius = Math.max(width, height) / 2;
-        dispatch(
-          Actions.addElement({
-            type: "circle",
-            transform: { x: center.x, y: center.y },
-            geometry: { r: Math.max(radius, 8) },
-            layerId: state.layers[0]?.id,
-          })
-        );
-      } else if (tool === "ellipse") {
-        dispatch(
-          Actions.addElement({
-            type: "ellipse",
-            transform: { x: center.x, y: center.y },
-            geometry: { rx: Math.max(width / 2, 8), ry: Math.max(height / 2, 8) },
-            layerId: state.layers[0]?.id,
-          })
-        );
-      } else if (tool === "line") {
-        dispatch(
-          Actions.addElement({
-            type: "line",
-            transform: { x: start.x, y: start.y },
-            geometry: { x1: 0, y1: 0, x2: x - start.x, y2: y - start.y },
-            layerId: state.layers[0]?.id,
-          })
-        );
-      } else if (tool === "polygon") {
-        const radius = Math.max(width, height) / 2;
-        dispatch(
-          Actions.addElement({
-            type: "polygon",
-            transform: { x: center.x, y: center.y },
-            geometry: { radius: Math.max(radius, 12), sides: 5 },
-            layerId: state.layers[0]?.id,
-          })
-        );
-      } else if (tool === "star") {
-        const radius = Math.max(width, height) / 2;
-        dispatch(
-          Actions.addElement({
-            type: "star",
-            transform: { x: center.x, y: center.y },
-            geometry: { outerRadius: Math.max(radius, 16), innerRadius: Math.max(radius / 2, 8), points: 5 },
-            layerId: state.layers[0]?.id,
-          })
-        );
-      }
-      if (overlayRef.current) overlayRef.current.innerHTML = "";
-    } else if (dragging.mode === "pen") {
-      const { path } = dragging;
-      dispatch(
-        Actions.addElement({
-          type: "path",
-          transform: { x: 0, y: 0 },
-          geometry: { commands: path, closed: true },
-          layerId: state.layers[0]?.id,
-        })
-      );
-      if (overlayRef.current) overlayRef.current.innerHTML = "";
-    }
-    setDragging(null);
   };
 
   const onWheel = (event) => {
@@ -224,12 +268,9 @@ export default function CanvasStage({ state, dispatch, EditorActions: Actions, a
       <div className="absolute inset-4 rounded-lg bg-slate-950 border border-slate-800 overflow-hidden">
         <svg
           ref={svgRef}
-          className="w-full h-full"
+          className="w-full h-full touch-none"
           viewBox={`${pan.x} ${pan.y} ${viewBoxWidth} ${viewBoxHeight}`}
           onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerLeave={onPointerUp}
         >
           <defs>
             <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
