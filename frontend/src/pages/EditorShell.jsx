@@ -1,92 +1,69 @@
-import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { createProject, getProject, listProjects, saveProject } from "../store/projects";
-import AnimationPanel from "../ui/AnimationPanel";
-import LayersAccordion from "../ui/LayersAccordion";
-import PropertiesPanel from "../ui/PropertiesPanel";
-import TabsBar from "../ui/TabsBar";
-import Topbar from "../ui/Topbar";
-import SvgEditor from "./SvgEditor.jsx";
+import { useEffect, useMemo, useReducer } from "react";
+import { EditorActions, createInitialEditor, editorReducer, evaluateElementAtTime } from "../editorState";
+import TopBar from "../ui/new/TopBar";
+import Toolbar from "../ui/new/Toolbar";
+import CanvasStage from "../ui/new/CanvasStage";
+import LayerPanel from "../ui/new/LayerPanel";
+import PropertiesInspector from "../ui/new/PropertiesInspector";
+import TimelinePanel from "../ui/new/TimelinePanel";
+import HelpOverlay from "../ui/new/HelpOverlay";
+import ExportPanel from "../ui/new/ExportPanel";
 
 export default function EditorShell() {
-  const { id } = useParams();
-  const nav = useNavigate();
-  const [playing, setPlaying] = useState(true);
-  const [project, setProject] = useState(null);
-  const [all, setAll] = useState(listProjects());
-  const [elements, setElements] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
+  const [state, dispatch] = useReducer(editorReducer, null, createInitialEditor);
+  const { present } = state;
 
   useEffect(() => {
-    if (id) {
-      const p = getProject(id);
-      if (p) setProject(p);
-      else setProject(createProject());
-    } else {
-      setProject(createProject());
-    }
-  }, [id]);
-
-  const onChange = (partial) => {
-    setProject((p) => {
-      const next = { ...(p || {}), ...(partial || {}) };
-      saveProject(next);
-      setAll(listProjects());
-      return next;
-    });
-  };
-
-  const onNewTab = () => {
-    const np = createProject();
-    saveProject(np);
-    setAll(listProjects());
-    nav(`/editor/${np.id}`);
-  };
-
-  const onSwitchTab = (id) => {
-    if (id && id !== project?.id) nav(`/editor/${id}`);
-  };
-
-  useEffect(() => {
-    const h = (e) => setSelectedId(e.detail?.id || null);
-    window.addEventListener("app:selected-changed", h);
-    return () => window.removeEventListener("app:selected-changed", h);
+    const handleKey = (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "z") {
+        event.preventDefault();
+        dispatch({ type: "UNDO" });
+      }
+      if ((event.metaKey || event.ctrlKey) && (event.key === "y" || (event.shiftKey && event.key === "Z"))) {
+        event.preventDefault();
+        dispatch({ type: "REDO" });
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
-  if (!project) return null;
+  const animatedElements = useMemo(() => {
+    const shouldAnimate = present.ui.playing || present.timeline.time !== 0;
+    if (!shouldAnimate) return present.elements;
+    const t = present.timeline.time;
+    const animated = {};
+    for (const [id, el] of Object.entries(present.elements)) {
+      animated[id] = evaluateElementAtTime(el, t);
+    }
+    return animated;
+  }, [present.elements, present.timeline.time, present.ui.playing]);
 
   return (
-    <div className="min-h-full flex flex-col max-h-screen">
-      <TabsBar projects={all} activeId={project.id} onChange={onSwitchTab} onNew={onNewTab} />
-      <Topbar playing={playing} onPlayToggle={() => setPlaying((v) => !v)} />
-      <div className="flex-1 min-h-0 overflow-hidden grid grid-cols-[300px_1fr_340px] gap-0">
-        {/* Left panel placeholder for layers (will enhance later) */}
-        <aside className="panel m-3 p-3 h-full min-h-0 overflow-auto">
-          <LayersAccordion elements={elements} />
+    <div className="flex flex-col h-screen bg-slate-950 text-slate-100">
+      <TopBar state={present} dispatch={dispatch} EditorActions={EditorActions} />
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <aside className="w-64 border-r border-slate-800 bg-slate-900/60 backdrop-blur-md">
+          <LayerPanel state={present} dispatch={dispatch} EditorActions={EditorActions} />
+          <ExportPanel state={present} dispatch={dispatch} EditorActions={EditorActions} />
         </aside>
-        {/* Canvas area */}
-        <main className="m-3 h-full min-h-0 overflow-hidden">
-          <div className="panel h-full p-3 flex items-center justify-center">
-            <SvgEditor
-              playingExternal={playing}
-              project={project}
-              onProjectChange={onChange}
-              onElementsChange={setElements}
+        <div className="flex flex-1 min-w-0 min-h-0">
+          <Toolbar state={present} dispatch={dispatch} EditorActions={EditorActions} />
+          <div className="flex-1 flex flex-col min-h-0 min-w-0">
+            <CanvasStage
+              state={present}
+              dispatch={dispatch}
+              EditorActions={EditorActions}
+              animatedElements={animatedElements}
             />
+            <TimelinePanel state={present} dispatch={dispatch} EditorActions={EditorActions} />
           </div>
-        </main>
-        {/* Right properties */}
-        <aside className="panel m-3 p-3 h-full min-h-0 overflow-auto space-y-4">
-          <div>
-            <div className="section-title mb-2">Properties</div>
-            <PropertiesPanel selectedId={selectedId} />
-          </div>
-          <div>
-            <div className="section-title mb-2">Animations</div>
-            <AnimationPanel selectedId={selectedId} />
-          </div>
-        </aside>
+          <aside className="w-80 border-l border-slate-800 bg-slate-900/60 backdrop-blur">
+            <PropertiesInspector state={present} dispatch={dispatch} EditorActions={EditorActions} />
+          </aside>
+        </div>
       </div>
+      {present.ui.showHelp && <HelpOverlay onClose={() => dispatch(EditorActions.toggleHelp(false))} />}
     </div>
   );
 }
